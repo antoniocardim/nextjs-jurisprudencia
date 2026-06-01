@@ -421,8 +421,11 @@ export async function getAutocompleteSuggestions(text: string): Promise<{ text: 
         { key: "Área", field: `${JurisprudenciaDocumentGenericKeys.find(k => k === "Área") || "Área"}.Index` },
         { key: "Secção", field: `${JurisprudenciaDocumentGenericKeys.find(k => k === "Secção") || "Secção"}.Index` },
         { key: "Meio Processual", field: `${JurisprudenciaDocumentGenericKeys.find(k => k === "Meio Processual") || "Meio Processual"}.Index` },
-        { key: "Votação", field: `${JurisprudenciaDocumentGenericKeys.find(k => k === "Votação") || "Votação"}.Index` }
+        { key: "Votação", field: `${JurisprudenciaDocumentGenericKeys.find(k => k === "Votação") || "Votação"}.Index` },
+        { key: "Sumário", field: `${JurisprudenciaDocumentTextKeys.find(k => k === "Sumário") || "Sumário"}` },
+        { key: "Texto", field: `${JurisprudenciaDocumentTextKeys.find(k => k === "Texto") || "Texto"}` }
     ];
+    const maxTextSuggestionLength = 120;
     const escapedUpper = queryText.toUpperCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const includePattern = `${escapedUpper}.*`;
 
@@ -463,6 +466,26 @@ export async function getAutocompleteSuggestions(text: string): Promise<{ text: 
                 votacao: {
                     terms: { field: `${fieldDefs[5].field}.keyword`, size: 10, include: includePattern },
                     aggs: { total_occurrences: { value_count: { field: `${fieldDefs[5].field}.keyword` } } }
+                },
+                sumario: {
+                    filter: {
+                        match_phrase_prefix: { [fieldDefs[6].field]: { query: queryText } }
+                    },
+                    aggs: {
+                        terms_agg: {
+                            significant_text: { field: fieldDefs[6].field, size: 10, min_doc_count: 1 }
+                        }
+                    }
+                },
+                texto: {
+                    filter: {
+                        match_phrase_prefix: { [fieldDefs[7].field]: { query: queryText } }
+                    },
+                    aggs: {
+                        terms_agg: {
+                            significant_text: { field: fieldDefs[7].field, size: 10, min_doc_count: 1 }
+                        }
+                    }
                 }
             }
         });
@@ -486,6 +509,28 @@ export async function getAutocompleteSuggestions(text: string): Promise<{ text: 
                     if (!unique.has(id)) {
                         const totalOccurrences = typeof bucket.total_occurrences?.value === "number" ? bucket.total_occurrences.value : bucket.doc_count;
                         unique.set(id, { text: bucket.key, type, docCount: bucket.doc_count, totalOccurrences });
+                    }
+                }
+            }
+        }
+
+        const textAggs: Array<{ key: "sumario" | "texto"; type: string }> = [
+            { key: "sumario", type: "Sumario" },
+            { key: "texto", type: "Texto" }
+        ];
+
+        for (const { key, type } of textAggs) {
+            const aggregations = response.aggregations as Record<string, { terms_agg?: { buckets?: Array<AggregationsStringTermsBucket & { total_occurrences?: { value?: number } }> } }> | undefined;
+            const agg = aggregations?.[key]?.terms_agg;
+            const buckets = Array.isArray(agg?.buckets) ? agg!.buckets : [];
+            for (const bucket of buckets) {
+                if (typeof bucket.key === "string") {
+                    const text = bucket.key.length > maxTextSuggestionLength
+                        ? bucket.key.slice(0, maxTextSuggestionLength).trim()
+                        : bucket.key;
+                    const id = `${type}:${text}`;
+                    if (!unique.has(id)) {
+                        unique.set(id, { text, type, docCount: bucket.doc_count, totalOccurrences: bucket.doc_count });
                     }
                 }
             }
