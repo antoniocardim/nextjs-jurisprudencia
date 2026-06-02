@@ -32,8 +32,6 @@ export default function Home() {
         try {
             const response = await fetch(`/jurisprudencia/api/autocomplete?q=${encodeURIComponent(query)}`);
             
-            console.log("A chamar API em:", response.url); // Adiciona isto para confirmarmos na consola
-
             if (!response.ok) {
                 console.error("Erro na resposta da API:", response.status);
                 return [];
@@ -132,7 +130,6 @@ export default function Home() {
                     alt="Logótipo STJ"
                     height={110}
                     width={280}
-                    priority
                 />
                 <h2 className="mt-3 fancy-font home-title">
                     Jurisprudência
