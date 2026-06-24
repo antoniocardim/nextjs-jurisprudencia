@@ -70,7 +70,7 @@ function ShowResults({results, searchParams, searchInfo}: {results: SearchHandle
                 <option value="des">Data Descendente</option>
             </SelectNavigate>
         </div>
-        {...results.map((h, i) => <JurisprudenciaItem key={i} hit={h} searchId={searchInfo.searchId}/>)}
+        {...results.map((h, i) => <JurisprudenciaItem key={h._source?.UUID || i} hit={h} searchId={searchInfo.searchId}/>)}
         <article className="row d-print-none">
             <nav>
                 <ul className="pagination justify-content-center text-center">

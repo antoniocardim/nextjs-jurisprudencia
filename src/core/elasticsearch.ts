@@ -7,14 +7,10 @@ export const filterableProps = JurisprudenciaDocumentKeys.filter(canBeActive);
 
 const DATA_FIELD: JurisprudenciaDocumentDateKey = "Data";
 const ENV_PUBLIC_STATES = process.env.PUBLIC_STATES?.trim().split(",") || [];
-const _PUBLIC_STATES: JurisprudenciaDocumentStateValue[] = [];
-for (let state of ENV_PUBLIC_STATES) {
-    if (JurisprudenciaDocumentStateValues.includes(state as JurisprudenciaDocumentStateValue)) {
-        _PUBLIC_STATES.push(state as JurisprudenciaDocumentStateValue);
-    }
-}
-
-export const PUBLIC_STATES = [..._PUBLIC_STATES];
+export const PUBLIC_STATES = ENV_PUBLIC_STATES.filter(
+    (state): state is JurisprudenciaDocumentStateValue =>
+        JurisprudenciaDocumentStateValues.includes(state as JurisprudenciaDocumentStateValue)
+);
 
 export const aggs = {
     MinAno: {
@@ -71,7 +67,7 @@ export default async function search(
 
     const must = Array.isArray(query) ? query : [query];
     if (!all) {
-        must.push({ terms: { STATE: _PUBLIC_STATES } })
+        must.push({ terms: { STATE: PUBLIC_STATES } })
     }
     const client = await getElasticSearchClient();
     return await client.search<JurisprudenciaDocument>({
@@ -97,11 +93,26 @@ export default async function search(
 }
 
 export function padZero(num: number | string, size: number = 4): string {
-    let s = num.toString();
-    while (s.length < size) {
-        s = "0" + s;
-    }
-    return s;
+    return num.toString().padStart(size, "0");
+}
+
+// Helper to normalize field values to arrays
+function normalizeArray(value: string | string[] | undefined): string[] {
+    if (!value) return [];
+    return (Array.isArray(value) ? value : [value]).filter(o => o.length > 0);
+}
+
+// Helper to build term or wildcard query based on value
+function buildTermOrWildcardQuery(value: string, fieldName: string): QueryDslQueryContainer {
+    return (value.startsWith("\"") && value.endsWith("\"")) ? {
+        term: {
+            [fieldName.replace("keyword", "raw")]: { value: `${value.slice(1, -1)}` }
+        }
+    } : {
+        wildcard: {
+            [fieldName]: { value: `*${value}*` }
+        }
+    };
 }
 
 export function populateFilters(filters: SearchFilters, body: Partial<Record<string, string | string[]>> = {}, afters = ["MinDate", "MaxDate"]) {
@@ -118,9 +129,9 @@ export function populateFilters(filters: SearchFilters, body: Partial<Record<str
         let aggField = (aggObj.terms ? "terms" : "significant_terms") as keyof AggregationsAggregationContainer;
         if (!aggObj[aggField]) continue;
         if (body[aggName]) {
-            filtersUsed[aggName] = ((Array.isArray(body[aggName]) ? body[aggName] : [body[aggName]]) as string[]).filter(o => o.length > 0);
+            filtersUsed[aggName] = normalizeArray(body[aggName]);
             let when = "pre" as keyof SearchFilters;
-            if (afters.indexOf(aggName) != -1) {
+            if (afters.includes(aggName)) {
                 when = "after" as keyof SearchFilters;
             }
             let fieldName = (aggObj[aggField] as AggregationsTermsAggregation).field!;
@@ -142,15 +153,7 @@ export function populateFilters(filters: SearchFilters, body: Partial<Record<str
             } else if (should.length) {
                 filters[when].push({
                     bool: {
-                        [must_or_should]: should.map(o => (o.startsWith("\"") && o.endsWith("\"")) ? {
-                            term: {
-                                [fieldName.replace("keyword", "raw")]: { value: `${o.slice(1, -1)}` }
-                            }
-                        } : {
-                            wildcard: {
-                                [fieldName]: { value: `*${o}*` }
-                            }
-                        }),
+                        [must_or_should]: should.map(o => buildTermOrWildcardQuery(o, fieldName))
                     }
                 });
             }
@@ -172,15 +175,7 @@ export function populateFilters(filters: SearchFilters, body: Partial<Record<str
             } else if (must_not.length) {
                 filters[when].push({
                     bool: {
-                        must_not: must_not.map(o => (o.startsWith("\"") && o.endsWith("\"")) ? {
-                            term: {
-                                [fieldName.replace("keyword", "raw")]: { value: `${o.slice(1, -1)}` }
-                            }
-                        } : {
-                            wildcard: {
-                                [fieldName]: { value: `*${o}*` }
-                            }
-                        })
+                        must_not: must_not.map(o => buildTermOrWildcardQuery(o, fieldName))
                     }
                 });
             }
@@ -188,7 +183,7 @@ export function populateFilters(filters: SearchFilters, body: Partial<Record<str
     }
 
     let dateWhen = "pre" as keyof SearchFilters;
-    if (afters.indexOf("MinDate") >= 0 || afters.indexOf("MaxDate") >= 0)
+    if (afters.includes("MinDate") || afters.includes("MaxDate"))
         dateWhen = "after";
     let minDate = Array.isArray(body.MinDate) ? body.MinDate[0] : body.MinDate;
     let maxDate = Array.isArray(body.MaxDate) ? body.MaxDate[0] : body.MaxDate;
@@ -219,7 +214,7 @@ export function populateFilters(filters: SearchFilters, body: Partial<Record<str
     }
 
     if (body.notHasField) {
-        filtersUsed.notHasField = (Array.isArray(body.notHasField) ? body.notHasField : [body.notHasField]).filter(o => o.length > 0);
+        filtersUsed.notHasField = normalizeArray(body.notHasField);
         filtersUsed.notHasField.forEach(field => {
             filters.pre.push({
                 bool: {
@@ -233,7 +228,7 @@ export function populateFilters(filters: SearchFilters, body: Partial<Record<str
         });
     }
     if (body.hasField) {
-        filtersUsed.hasField = (Array.isArray(body.hasField) ? body.hasField : [body.hasField]).filter(o => o.length > 0);
+        filtersUsed.hasField = normalizeArray(body.hasField);
         filtersUsed.hasField.forEach(field => {
             filters.pre.push({
                 bool: {
@@ -303,12 +298,17 @@ export function createQueryDslQueryContainer(string?: string | string[]): QueryD
         };
     }
 
-    const sumarioField = JurisprudenciaDocumentTextKeys.find(key => key === "Sumário") || "Sumário";
-    const textoField = JurisprudenciaDocumentTextKeys.find(key => key === "Texto") || "Texto";
-    const descritoresBase = JurisprudenciaDocumentGenericKeys.find(key => key === "Descritores") || "Descritores";
-    const descritoresField = `${descritoresBase}.Index`;
-    const numeroProcessoField = JurisprudenciaDocumentKeys.find(key => key === "Número de Processo") || "Número de Processo";
-    const ecliField = JurisprudenciaDocumentExactKeys.find(key => key === "ECLI") || "ECLI";
+    // Helper to safely get field name from document keys array
+    const getFieldName = <T extends string>(keysArray: readonly T[], fieldName: T, suffix?: string): string => {
+        const found = keysArray.find(key => key === fieldName) || fieldName;
+        return suffix ? `${found}${suffix}` : found;
+    };
+
+    const sumarioField = getFieldName(JurisprudenciaDocumentTextKeys, "Sumário" as any);
+    const textoField = getFieldName(JurisprudenciaDocumentTextKeys, "Texto" as any);
+    const descritoresField = getFieldName(JurisprudenciaDocumentGenericKeys, "Descritores" as any, ".Index");
+    const numeroProcessoField = getFieldName(JurisprudenciaDocumentKeys, "Número de Processo" as any);
+    const ecliField = getFieldName(JurisprudenciaDocumentExactKeys, "ECLI" as any);
 
     const multiMatchFields = [
         `${sumarioField}^10`,
@@ -415,22 +415,60 @@ export async function getAutocompleteSuggestions(text: string): Promise<{ text: 
     const queryText = text?.trim();
     if (!queryText) return [];
 
+    // Helper to safely get field name from document keys array
+    const getFieldName = <T extends string>(keysArray: readonly T[], fieldName: T, suffix?: string): string => {
+        const found = keysArray.find(key => key === fieldName) || fieldName;
+        return suffix ? `${found}${suffix}` : found;
+    };
+
     const fieldDefs = [
-        { key: "Descritores", field: `${JurisprudenciaDocumentGenericKeys.find(k => k === "Descritores") || "Descritores"}.Index` },
-        { key: "Relator Nome Profissional", field: `${JurisprudenciaDocumentGenericKeys.find(k => k === "Relator Nome Profissional") || "Relator Nome Profissional"}.Index` },
-        { key: "Área", field: `${JurisprudenciaDocumentGenericKeys.find(k => k === "Área") || "Área"}.Index` },
-        { key: "Secção", field: `${JurisprudenciaDocumentGenericKeys.find(k => k === "Secção") || "Secção"}.Index` },
-        { key: "Meio Processual", field: `${JurisprudenciaDocumentGenericKeys.find(k => k === "Meio Processual") || "Meio Processual"}.Index` },
-        { key: "Votação", field: `${JurisprudenciaDocumentGenericKeys.find(k => k === "Votação") || "Votação"}.Index` },
-        { key: "Sumário", field: `${JurisprudenciaDocumentTextKeys.find(k => k === "Sumário") || "Sumário"}` },
-        { key: "Texto", field: `${JurisprudenciaDocumentTextKeys.find(k => k === "Texto") || "Texto"}` }
+        { key: "Descritores", field: getFieldName(JurisprudenciaDocumentGenericKeys, "Descritores" as any, ".Index") },
+        { key: "Relator Nome Profissional", field: getFieldName(JurisprudenciaDocumentGenericKeys, "Relator Nome Profissional" as any, ".Index") },
+        { key: "Área", field: getFieldName(JurisprudenciaDocumentGenericKeys, "Área" as any, ".Index") },
+        { key: "Secção", field: getFieldName(JurisprudenciaDocumentGenericKeys, "Secção" as any, ".Index") },
+        { key: "Meio Processual", field: getFieldName(JurisprudenciaDocumentGenericKeys, "Meio Processual" as any, ".Index") },
+        { key: "Votação", field: getFieldName(JurisprudenciaDocumentGenericKeys, "Votação" as any, ".Index") },
+        { key: "Sumário", field: getFieldName(JurisprudenciaDocumentTextKeys, "Sumário" as any) },
+        { key: "Texto", field: getFieldName(JurisprudenciaDocumentTextKeys, "Texto" as any) }
     ];
     const maxTextSuggestionLength = 120;
-    const escapedUpper = queryText.toUpperCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const includePattern = `${escapedUpper}.*`;
+    const escapedLower = queryText.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const includePattern = `${escapedLower}.*`;
 
     try {
         const client = await getElasticSearchClient();
+
+        // Helper to create standard aggregation for terms
+        const createTermsAgg = (field: string, includePattern: string) => ({
+            terms: { field: `${field}.keyword`, size: 10, include: includePattern },
+            aggs: { total_occurrences: { value_count: { field: `${field}.keyword` } } }
+        });
+
+        // Define aggregation configuration
+        const aggConfigs = [
+            { aggKey: "descritores", fieldIndex: 0, type: "Descritores" },
+            { aggKey: "relator", fieldIndex: 1, type: "Relator Nome Profissional" },
+            { aggKey: "area", fieldIndex: 2, type: "Área" },
+            { aggKey: "secao", fieldIndex: 3, type: "Secção" },
+            { aggKey: "meioProcessual", fieldIndex: 4, type: "Meio Processual" },
+            { aggKey: "votacao", fieldIndex: 5, type: "Votação" }
+        ];
+
+        // Build aggregations dynamically
+        const aggs: Record<string, any> = {};
+        for (const { aggKey, fieldIndex } of aggConfigs) {
+            aggs[aggKey] = createTermsAgg(fieldDefs[fieldIndex].field, includePattern);
+        }
+        // Add text aggregations
+        aggs.sumario = {
+            filter: { match_phrase_prefix: { [fieldDefs[6].field]: { query: queryText } } },
+            aggs: { terms_agg: { significant_text: { field: fieldDefs[6].field, size: 10, min_doc_count: 1 } } }
+        };
+        aggs.texto = {
+            filter: { match_phrase_prefix: { [fieldDefs[7].field]: { query: queryText } } },
+            aggs: { terms_agg: { significant_text: { field: fieldDefs[7].field, size: 10, min_doc_count: 1 } } }
+        };
+
         const response = await client.search<JurisprudenciaDocument, Record<string, AggregationsAggregate>>({
             index: JurisprudenciaVersion,
             size: 0,
@@ -442,76 +480,35 @@ export async function getAutocompleteSuggestions(text: string): Promise<{ text: 
                     minimum_should_match: 1
                 }
             },
-            aggs: {
-                descritores: {
-                    terms: { field: `${fieldDefs[0].field}.keyword`, size: 10, include: includePattern },
-                    aggs: { total_occurrences: { value_count: { field: `${fieldDefs[0].field}.keyword` } } }
-                },
-                relator: {
-                    terms: { field: `${fieldDefs[1].field}.keyword`, size: 10, include: includePattern },
-                    aggs: { total_occurrences: { value_count: { field: `${fieldDefs[1].field}.keyword` } } }
-                },
-                area: {
-                    terms: { field: `${fieldDefs[2].field}.keyword`, size: 10, include: includePattern },
-                    aggs: { total_occurrences: { value_count: { field: `${fieldDefs[2].field}.keyword` } } }
-                },
-                secao: {
-                    terms: { field: `${fieldDefs[3].field}.keyword`, size: 10, include: includePattern },
-                    aggs: { total_occurrences: { value_count: { field: `${fieldDefs[3].field}.keyword` } } }
-                },
-                meioProcessual: {
-                    terms: { field: `${fieldDefs[4].field}.keyword`, size: 10, include: includePattern },
-                    aggs: { total_occurrences: { value_count: { field: `${fieldDefs[4].field}.keyword` } } }
-                },
-                votacao: {
-                    terms: { field: `${fieldDefs[5].field}.keyword`, size: 10, include: includePattern },
-                    aggs: { total_occurrences: { value_count: { field: `${fieldDefs[5].field}.keyword` } } }
-                },
-                sumario: {
-                    filter: {
-                        match_phrase_prefix: { [fieldDefs[6].field]: { query: queryText } }
-                    },
-                    aggs: {
-                        terms_agg: {
-                            significant_text: { field: fieldDefs[6].field, size: 10, min_doc_count: 1 }
-                        }
-                    }
-                },
-                texto: {
-                    filter: {
-                        match_phrase_prefix: { [fieldDefs[7].field]: { query: queryText } }
-                    },
-                    aggs: {
-                        terms_agg: {
-                            significant_text: { field: fieldDefs[7].field, size: 10, min_doc_count: 1 }
-                        }
+            aggs
+        });
+
+        const aggMap = aggConfigs.map(c => ({ key: c.aggKey, type: c.type }));
+
+        const unique = new Map<string, { text: string; type: string; docCount: number; totalOccurrences: number }>();
+
+        // Helper to process and add bucket suggestions
+        const processBuckets = (buckets: AggregationsStringTermsBucket[], type: string, textLimit?: number) => {
+            for (const bucket of buckets) {
+                if (typeof bucket.key === "string") {
+                    const text = textLimit && bucket.key.length > textLimit
+                        ? bucket.key.slice(0, textLimit).trim()
+                        : bucket.key;
+                    const id = `${type}:${text}`;
+                    if (!unique.has(id)) {
+                        const totalOccurrences = typeof bucket.total_occurrences?.value === "number"
+                            ? bucket.total_occurrences.value
+                            : bucket.doc_count;
+                        unique.set(id, { text, type, docCount: bucket.doc_count, totalOccurrences });
                     }
                 }
             }
-        });
+        };
 
-        const aggMap: Array<{ key: keyof typeof response.aggregations | string; type: string }> = [
-            { key: "descritores", type: "Descritores" },
-            { key: "relator", type: "Relator Nome Profissional" },
-            { key: "area", type: "Área" },
-            { key: "secao", type: "Secção" },
-            { key: "meioProcessual", type: "Meio Processual" },
-            { key: "votacao", type: "Votação" }
-        ];
-
-        const unique = new Map<string, { text: string; type: string; docCount: number; totalOccurrences: number }>();
         for (const { key, type } of aggMap) {
             const agg = (response.aggregations as Record<string, { buckets?: Array<AggregationsStringTermsBucket & { total_occurrences?: { value?: number } }> }> | undefined)?.[key];
             const buckets = Array.isArray(agg?.buckets) ? agg!.buckets : [];
-            for (const bucket of buckets) {
-                if (typeof bucket.key === "string") {
-                    const id = `${type}:${bucket.key}`;
-                    if (!unique.has(id)) {
-                        const totalOccurrences = typeof bucket.total_occurrences?.value === "number" ? bucket.total_occurrences.value : bucket.doc_count;
-                        unique.set(id, { text: bucket.key, type, docCount: bucket.doc_count, totalOccurrences });
-                    }
-                }
-            }
+            processBuckets(buckets, type, undefined);
         }
 
         const textAggs: Array<{ key: "sumario" | "texto"; type: string }> = [
@@ -523,21 +520,13 @@ export async function getAutocompleteSuggestions(text: string): Promise<{ text: 
             const aggregations = response.aggregations as Record<string, { terms_agg?: { buckets?: Array<AggregationsStringTermsBucket & { total_occurrences?: { value?: number } }> } }> | undefined;
             const agg = aggregations?.[key]?.terms_agg;
             const buckets = Array.isArray(agg?.buckets) ? agg!.buckets : [];
-            for (const bucket of buckets) {
-                if (typeof bucket.key === "string") {
-                    const text = bucket.key.length > maxTextSuggestionLength
-                        ? bucket.key.slice(0, maxTextSuggestionLength).trim()
-                        : bucket.key;
-                    const id = `${type}:${text}`;
-                    if (!unique.has(id)) {
-                        unique.set(id, { text, type, docCount: bucket.doc_count, totalOccurrences: bucket.doc_count });
-                    }
-                }
-            }
+            processBuckets(buckets, type, maxTextSuggestionLength);
         }
 
-        return Array.from(unique.values()).slice(0, 30);
+        const results = Array.from(unique.values()).slice(0, 30);
+        return results;
     } catch (e) {
+        console.error("Error in getAutocompleteSuggestions:", e);
         return [];
     }
 }

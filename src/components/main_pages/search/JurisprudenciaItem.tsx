@@ -67,7 +67,7 @@ export default function JurisprudenciaItem({ hit, searchId }: { hit: SearchHandl
                 <div className="highlight">
 
                     <div className="highlight-bar" data-key="Sumário">
-                        {(hit.highlight.Sumário as HighlightFragment[]).map((marker, i) => <div key={i} className="highlight-bar-hit-parent">
+                        {(hit.highlight.Sumário as HighlightFragment[]).map((marker, i) => <div key={`sumario-marker-${i}`} className="highlight-bar-hit-parent">
                             <div className="highlight-bar-hit" data-offset={marker.offset} data-per={marker.offset / marker.size} style={{ left: `${marker.offset / marker.size * 100}%`, background: "green" }}></div>
                             <div className="highlight-bar-hit-content d-none" dangerouslySetInnerHTML={{ __html: marker.textFragment }}></div>
                         </div>)}
@@ -86,7 +86,7 @@ export default function JurisprudenciaItem({ hit, searchId }: { hit: SearchHandl
                 </span>
                 <div className="highlight">
                     <div className="highlight-bar" data-key="Texto">
-                        {(hit.highlight.Texto as HighlightFragment[]).map((marker, i) => <div key={i} className="highlight-bar-hit-parent">
+                        {(hit.highlight.Texto as HighlightFragment[]).map((marker, i) => <div key={`texto-marker-${i}`} className="highlight-bar-hit-parent">
                             <div className="highlight-bar-hit" data-offset={marker.offset} data-per={marker.offset / marker.size} style={{ left: `${marker.offset / marker.size * 100}%`, background: "green" }}></div>
                             <div className="highlight-bar-hit-content d-none" dangerouslySetInnerHTML={{ __html: marker.textFragment }}></div>
                         </div>)}
@@ -94,7 +94,7 @@ export default function JurisprudenciaItem({ hit, searchId }: { hit: SearchHandl
                 </div>
             </summary>
             <div className="col-12 p-2 border d-flex flex-wrap">
-                {(hit.highlight.Texto as HighlightFragment[]).flatMap((frag, i) => [<div key={i} className="pesquisa-sep"></div>, <div key={i} dangerouslySetInnerHTML={{ __html: frag.textFragment }}></div>])}
+                {(hit.highlight.Texto as HighlightFragment[]).flatMap((frag, i) => [<div key={`sep-${i}`} className="pesquisa-sep"></div>, <div key={`text-${i}`} dangerouslySetInnerHTML={{ __html: frag.textFragment }}></div>])}
             </div>
         </details> : ""}
     </article>

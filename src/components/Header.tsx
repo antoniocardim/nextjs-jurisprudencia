@@ -29,7 +29,9 @@ export default function Header(props: { keys_to_remove: string[] }) {
                     src={logoname}
                     alt="Logótipo STJ"
                     height={70}
-                    width={180}></Image>
+                    width={180}
+                    priority
+                />
                 <div className="ps-2 d-flex flex-column align-items-center">
                     <h5 className="m-0 fancy-font">Jurisprudência</h5>
                 </div>
